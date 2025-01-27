@@ -314,90 +314,19 @@ const styles = StyleSheet.create({
   },
 });
 
-const newRequests: ManagerApprovalRequest[] = [
-  {
-    status: ManagerApprovalRequestStatus.REQUESTED,
-    requestCreatedAt: new Date(),
-    responseSentAt: new Date(),
-    uuid: uuid(),
-    venueXRefID: '24477',
-    data: {
-      type: "DISCOUNT",
-      typeLabel: "Discount Request",
-      discountAmount: "$15",
-      menuItemLabel: "Steak",
-      menuItemXRefID: uuid(),
-      menuItemPrice: "$70",
-      staffUserFullName: "Emily Davis",
-      staffUserXRefID: uuid(),
-      totalBill: "$95.00",
-    }
-  },
-  {
-    status: ManagerApprovalRequestStatus.REQUESTED,
-    requestCreatedAt: new Date(),
-    responseSentAt: new Date(),
-    uuid: uuid(),
-    venueXRefID: '24477',
-    data: {
-      type: "EARLY_CLOCKIN",
-      typeLabel: "Early Clock-in Request",
-      staffUserFullName: "Chris Johnson",
-      diffFromScheduledTime: "1 hour and 30 minutes",
-      clockInTime: "08:30am",
-      scheduledStartTime: "10:00am",
-    }
-  },
-];
-
-const pastRequests: ManagerApprovalRequest[] = [
-  {
-    data: {
-      type: "DISCOUNT",
-      typeLabel: "Discount Request",
-      menuItemXRefID: uuid(),
-      staffUserXRefID: uuid(),
-      staffUserFullName: "Emily Davis",
-      discountAmount: "$15",
-      menuItemLabel: "Steak",
-      menuItemPrice: "$70",
-      totalBill: "$95.00",
-    },
-    status: ManagerApprovalRequestStatus.APPROVED,
-    requestCreatedAt: new Date(),
-    responseSentAt: new Date(),
-    uuid: uuid(),
-    venueXRefID: '24477'
-  },
-  {
-    data: {
-      type: "EARLY_CLOCKIN",
-      typeLabel: "Early Clock-in Request",
-      staffUserFullName: "Chris Johnson",
-      diffFromScheduledTime: "1 hour and 30 minutes",
-      clockInTime: "08:30am",
-      scheduledStartTime: "10:00am",
-    },
-    status: ManagerApprovalRequestStatus.REJECTED,
-    requestCreatedAt: new Date(),
-    responseSentAt: new Date(),
-    uuid: uuid(),
-    venueXRefID: '24477'
-  },
-];
 
 export default function HomeScreen() {
   // const [isCollapsed, setIsCollapsed] = useState(false);
-  const [newRequestsState, setNewRequestsState] = useState(newRequests);
-  const [pastRequestsState, setPastRequestsState] = useState(pastRequests);
+  const [newRequestsState, setNewRequestsState] = useState<ManagerApprovalRequest[]>([]);
+  const [pastRequestsState, setPastRequestsState] = useState<ManagerApprovalRequest[]>([]);
   const [loading, setLoading] = useState(false);
   const [pusher, setPusher] = useState<Pusher | null>(null);
+  const seenUuids = useRef(new Set());
 
   useEffect(() => {
     const fetchApprovalRequests = async () => {
       try {
-        setLoading(true);
-        const pastRequests = await axios.get('http://100.84.87.96:8013/frontend/operational-menu/v2/venues/24477/discounts/approval-requests?statusList=APPROVED,REJECTED', {
+        const pastRequests = await axios.get('http://100.84.87.96:8013/frontend/operational-menu/v2/venues/24477/discounts/approval-requests?statusList=APPROVED,REJECTED&sortDesc=responseSentAt', {
           withCredentials: false,
           headers: {
             'Content-Type': 'application/json',
@@ -411,115 +340,127 @@ export default function HomeScreen() {
             'Content-Type': 'application/json',
           }
         });
-        console.log(JSON.stringify(newRequests.data))
-        setNewRequestsState(newRequests.data);
+        const newRequestsData = newRequests.data;
+
+        // If the requests were approved somewhere else, just remove them from here
+        // and the old request API will just load it in the view below
+        setNewRequestsState((prevRequests) => 
+          prevRequests.filter(req => newRequestsData.some((newReq: ManagerApprovalRequest) => newReq.uuid === req.uuid))
+        );
+        
+        // Because server sends latest requests first, but our addNewRequest method stacks new rows above old rows, 
+        // we reverse the array to process the old rows first so that newest row is processes at the end
+        newRequestsData.reverse().forEach((request: ManagerApprovalRequest) => {
+          if (!seenUuids.current.has(request.uuid)) {
+            seenUuids.current.add(request.uuid);
+            addNewRequest(request);
+          }
+        });
       } catch (error) {
         console.error("Error fetching approval requests:", error);
-      } finally {
-        setLoading(false);
       }
     };
 
-    fetchApprovalRequests();
+    const interval = setInterval(fetchApprovalRequests, 1000);
+    return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    const initializePusher = async () => {
-      try {
-        const pusherInstance = Pusher.getInstance();
-        await pusherInstance.init({
-          apiKey: '80a67fbfd1117a6525e2',
-          cluster: 'mt1'
-        });
+  // PUSHER IMPLEMENTATION
+  // useEffect(() => {
+  //   const initializePusher = async () => {
+  //     try {
+  //       const pusherInstance = Pusher.getInstance();
+  //       await pusherInstance.init({
+  //         apiKey: '80a67fbfd1117a6525e2',
+  //         cluster: 'mt1'
+  //       });
 
-        await pusherInstance.connect();
-        setPusher(pusherInstance);
+  //       await pusherInstance.connect();
+  //       setPusher(pusherInstance);
 
-        pusherInstance.subscribe({
-          channelName: '24477-taha',
-          onEvent: (data) => {
-            console.log("Received data from Pusher:", data);
-            // Handle received data (e.g., updating state)
-          }
-        })
+  //       pusherInstance.subscribe({
+  //         channelName: '24477-taha',
+  //         onEvent: (data) => {
+  //           console.log("Received data from Pusher:", data);
+  //           // Handle received data (e.g., updating state)
+  //         }
+  //       })
 
-        console.log("Pusher initialized and connected");
-      } catch (error) {
-        console.error("Error initializing Pusher:", error);
-      }
-    };
+  //       console.log("Pusher initialized and connected");
+  //     } catch (error) {
+  //       console.error("Error initializing Pusher:", error);
+  //     }
+  //   };
 
-    initializePusher();
+  //   initializePusher();
 
-    return () => {
-      if (pusher) {
-        pusher.disconnect();
-      }
-    };
-  }, []);
+  //   return () => {
+  //     if (pusher) {
+  //       pusher.disconnect();
+  //     }
+  //   };
+  // }, []);
   
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const slideAnim = useRef(new Animated.Value(0)).current;
 
-  const addNewRequestHandler = () => {
-    addNewRequest();
-  };
+  // const addNewRequestHandler = () => {
+    // const newDiscountRequest: RequestItem = {
+    //   type: "DISCOUNT",
+    //   typeLabel: "Discount Request",
+    //   discountAmount: `$${faker.number.int({ min: 5, max: 20 })}`,
+    //   menuItemLabel: faker.commerce.productName(),
+    //   menuItemXRefID: uuid(),
+    //   menuItemPrice: `$${faker.number.int({ min: 10, max: 50 })}`,
+    //   staffUserFullName: faker.person.fullName(),
+    //   staffUserXRefID: uuid(),
+    //   totalBill: `$${faker.number.int({ min: 50, max: 100 })}`,
+    // }
 
-  const addNewRequest = async (request?: ManagerApprovalRequest) => {
-    let newRequest = request
-    if (newRequest == null) {
-      const newDiscountRequest: RequestItem = {
-        type: "DISCOUNT",
-        typeLabel: "Discount Request",
-        discountAmount: `$${faker.number.int({ min: 5, max: 20 })}`,
-        menuItemLabel: faker.commerce.productName(),
-        menuItemXRefID: uuid(),
-        menuItemPrice: `$${faker.number.int({ min: 10, max: 50 })}`,
-        staffUserFullName: faker.person.fullName(),
-        staffUserXRefID: uuid(),
-        totalBill: `$${faker.number.int({ min: 50, max: 100 })}`,
-      }
+    // const clockInTimeHour = faker.number.int({ min: 1, max: 12 });
+    // const clockInTimeMinutes = faker.helpers.arrayElement(["00", "30"]);
+    // const scheduledStartTimeHour = faker.number.int({ min: 1, max: 12 });
+    // const scheduledStartTimeMinutes = faker.helpers.arrayElement(["00", "30"]);
 
-      const clockInTimeHour = faker.number.int({ min: 1, max: 12 });
-      const clockInTimeMinutes = faker.helpers.arrayElement(["00", "30"]);
-      const scheduledStartTimeHour = faker.number.int({ min: 1, max: 12 });
-      const scheduledStartTimeMinutes = faker.helpers.arrayElement(["00", "30"]);
+    // const newClockInRequest: RequestItem = {
+    //   type: "EARLY_CLOCKIN",
+    //   typeLabel: "Early Clock-in Request",
+    //   clockInTime: `${clockInTimeHour}:${clockInTimeMinutes}am`,
+    //   scheduledStartTime: `${scheduledStartTimeHour}:${scheduledStartTimeMinutes}am`,
+    //   diffFromScheduledTime: `${Math.abs(
+    //     clockInTimeHour - scheduledStartTimeHour
+    //   )} hours and ${Math.abs(
+    //     parseInt(clockInTimeMinutes) - parseInt(scheduledStartTimeMinutes)
+    //   )} minutes`,
+    //   staffUserFullName: faker.person.fullName(),
+    // };
 
-      const newClockInRequest: RequestItem = {
-        type: "EARLY_CLOCKIN",
-        typeLabel: "Early Clock-in Request",
-        clockInTime: `${clockInTimeHour}:${clockInTimeMinutes}am`,
-        scheduledStartTime: `${scheduledStartTimeHour}:${scheduledStartTimeMinutes}am`,
-        diffFromScheduledTime: `${Math.abs(
-          clockInTimeHour - scheduledStartTimeHour
-        )} hours and ${Math.abs(
-          parseInt(clockInTimeMinutes) - parseInt(scheduledStartTimeMinutes)
-        )} minutes`,
-        staffUserFullName: faker.person.fullName(),
-      };
+    // const newRequest = faker.helpers.arrayElement([{
+    //     data: newDiscountRequest,
+    //     status: ManagerApprovalRequestStatus.REQUESTED,
+    //     requestCreatedAt: new Date(),
+    //     responseSentAt: new Date(),
+    //     uuid: uuid(),
+    //     venueXRefID: '24477'
+    //   }, { 
+    //     data: newClockInRequest,
+    //     status: ManagerApprovalRequestStatus.REQUESTED,
+    //     requestCreatedAt: new Date(),
+    //     responseSentAt: new Date(),
+    //     uuid: uuid(),
+    //     venueXRefID: '24477' 
+    //   },
+    // ]);
+  //   addNewRequest(newRequest);
+  // };
 
-      newRequest = faker.helpers.arrayElement([{
-          data: newDiscountRequest,
-          status: ManagerApprovalRequestStatus.REQUESTED,
-          requestCreatedAt: new Date(),
-          responseSentAt: new Date(),
-          uuid: uuid(),
-          venueXRefID: '24477'
-        }, { 
-          data: newClockInRequest,
-          status: ManagerApprovalRequestStatus.REQUESTED,
-          requestCreatedAt: new Date(),
-          responseSentAt: new Date(),
-          uuid: uuid(),
-          venueXRefID: '24477' 
-        },
-      ]);
-    }
+  const addNewRequest = async (request: ManagerApprovalRequest) => {
+
 
     fadeAnim.setValue(0);
     slideAnim.setValue(0);
 
-    setNewRequestsState((prevRequests) => [...prevRequests, newRequest]);
+    setNewRequestsState((prevRequests) => [request, ...prevRequests]);
 
     Animated.parallel([
       Animated.timing(fadeAnim, {
@@ -539,29 +480,44 @@ export default function HomeScreen() {
     await sound.playAsync();
   };
 
-  const triggerApprove = (uuid: string, status: ManagerApprovalRequestStatus.APPROVED | ManagerApprovalRequestStatus.REJECTED) => {
+  const triggerResponse = async (uuid: string, status: ManagerApprovalRequestStatus.APPROVED | ManagerApprovalRequestStatus.REJECTED) => {
     setLoading(true);
 
-    setTimeout(() => {
-      setNewRequestsState((prevRequests) => {
-        const processedRequest = prevRequests.find(
-          (request) => request.uuid === uuid
-        );
-        if (!processedRequest) {
-          throw new Error("Request not found");
-        }
+    const url = `http://100.84.87.96:8013/invenue/operational-menu/v2/venues/24477/discounts/approval-requests/${uuid}/response`;
 
-        // Add the approved/rejected request to the past requests state
-        setPastRequestsState((prevPastRequests) => [
-          { ...processedRequest, status },
-          ...prevPastRequests,
-        ]);
+    const resp = await axios.post(
+      url, 
+      JSON.stringify({ status }),
+      {
+        withCredentials: false,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    console.log(resp.data)
 
-        // Remove the approved/rejected request from the new requests state
-        return prevRequests.filter((request) => request.uuid !== uuid);
-      });
+    // MOCK APPROVAL OR REJECTION BACKEND CALL
+    // setTimeout(() => {
+      // setNewRequestsState((prevRequests) => {
+      //   const processedRequest = prevRequests.find(
+      //     (request) => request.uuid === uuid
+      //   );
+      //   if (!processedRequest) {
+      //     throw new Error("Request not found");
+      //   }
+
+      //   // Add the approved/rejected request to the past requests state
+      //   setPastRequestsState((prevPastRequests) => [
+      //     { ...processedRequest, status },
+      //     ...prevPastRequests,
+      //   ]);
+
+      //   // Remove the approved/rejected request from the new requests state
+      //   return prevRequests.filter((request) => request.uuid !== uuid);
+      // });
       setLoading(false);
-    }, 1000);
+    // }, 1000);
   };
 
   return (
@@ -638,14 +594,14 @@ export default function HomeScreen() {
                   <View style={styles.approvalButtons}>
                     <TouchableOpacity
                       style={styles.rejectButton}
-                      onPress={() => triggerApprove(item.uuid, ManagerApprovalRequestStatus.REJECTED)}
+                      onPress={() => triggerResponse(item.uuid, ManagerApprovalRequestStatus.REJECTED)}
                       disabled={loading}
                     >
                       <Text style={styles.rejectText}>Reject</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.approveButton}
-                      onPress={() => triggerApprove(item.uuid, ManagerApprovalRequestStatus.APPROVED)}
+                      onPress={() => triggerResponse(item.uuid, ManagerApprovalRequestStatus.APPROVED)}
                       disabled={loading}
                     >
                       <Text style={styles.approveText}>Approve</Text>
@@ -677,9 +633,9 @@ export default function HomeScreen() {
         contentContainerStyle={{ paddingBottom: 20 }}
       />
 
-      <TouchableOpacity style={styles.floatingButton} onPress={addNewRequestHandler}>
+      {/* <TouchableOpacity style={styles.floatingButton} onPress={addNewRequestHandler}>
         <Text style={styles.floatingButtonText}>+</Text>
-      </TouchableOpacity>
+      </TouchableOpacity> */}
     </View>
   );
 }
