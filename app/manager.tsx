@@ -1,8 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import axios from 'axios';
-import 'react-native-get-random-values';
-import { v4 as uuid } from 'uuid';
-import { faker } from "@faker-js/faker";
+import { useAuth } from '../contexts/AuthContext';
 import {
   FlatList,
   View,
@@ -11,73 +9,19 @@ import {
   TouchableOpacity,
   Animated,
   ActivityIndicator,
-  AppState,
 } from "react-native";
 
 import { Audio } from "expo-av";
-import { Pusher } from "@pusher/pusher-websocket-react-native";
-
-export enum ApprovalRequestType {
-  DISCOUNT = 'DISCOUNT',
-  CLOCK_IN = 'EARLY_CLOCKIN',
-}
-
-export enum ManagerApprovalRequestStatus {
-  APPROVED = 'APPROVED',
-  REJECTED = 'REJECTED',
-  REQUESTED = 'REQUESTED',
-}
-
-export type DiscountApprovalRequest = {
-  type: 'DISCOUNT'
-  typeLabel: 'Discount Request'
-  menuItemXRefID: string
-  menuItemLabel: string
-  discountAmount: string
-  menuItemPrice: string
-  staffUserXRefID: string
-  staffUserFullName: string
-  totalBill: string
-}
-export type DiscountProcessedRequest = DiscountApprovalRequest & {
-  status: 'APPROVED' | 'REJECTED'
-}
-
-export type EarlyClockinApprovalRequest = {
-  type: 'EARLY_CLOCKIN'
-  typeLabel: 'Early Clock-in Request'
-  staffUserFullName: string
-  diffFromScheduledTime: string
-  clockInTime: string
-  scheduledStartTime: string
-}
-export type EarlyClockinProcessedRequest = EarlyClockinApprovalRequest & {
-  status: 'APPROVED' | 'REJECTED'
-}
-// Union type combining both request types
-export type RequestItem = DiscountApprovalRequest | EarlyClockinApprovalRequest
-export type ProcessedRequestItem = DiscountProcessedRequest | EarlyClockinProcessedRequest
-
-export type ManagerApprovalRequest = {
-  uuid: string
-  venueXRefID: string
-  data: RequestItem
-  status: ManagerApprovalRequestStatus
-  requestCreatedAt: Date
-  responseSentAt: Date
-}
+// import { Pusher } from "@pusher/pusher-websocket-react-native";
+import { RequestItem, ManagerApprovalRequest, ManagerApprovalRequestStatus } from "../types/types";
+import { getMockedRequest } from "./utils";
 
 const renderApprovalDescription = (item: RequestItem) => {
   switch (item.type) {
     case "DISCOUNT":
       return (
         <Text style={styles.approvalDescription}>
-          <Text style={styles.boldText}>{item.staffUserFullName} </Text> would like to apply
-          a discount of{" "}
-          <Text style={styles.boldText}>{item.discountAmount}</Text> on{" "}
-          <Text style={styles.boldText}>{item.menuItemLabel}</Text> (
-          <Text style={styles.boldText}>{item.menuItemPrice}</Text>) on the
-          total bill of <Text style={styles.boldText}>{item.totalBill}</Text>.
+          <Text style={styles.boldText}>{item.staffUserFullName} </Text> would like to apply discounts to an order
         </Text>
       );
     case "EARLY_CLOCKIN":
@@ -103,11 +47,7 @@ const renderProcessedRequestDescription = (item: RequestItem) => {
     case "DISCOUNT":
       return (
         <Text style={styles.approvalDescription}>
-          <Text style={styles.boldText}>{item.staffUserFullName}</Text> had requested a
-          discount of <Text style={styles.boldText}>{item.discountAmount}</Text>{" "}
-          on <Text style={styles.boldText}>{item.menuItemLabel}</Text> (
-          <Text style={styles.boldText}>{item.menuItemPrice}</Text>) on the
-          total bill of <Text style={styles.boldText}>{item.totalBill}</Text>.
+          <Text style={styles.boldText}>{item.staffUserFullName}</Text> had requested to apply discounts
         </Text>
       );
     case "EARLY_CLOCKIN":
@@ -315,18 +255,19 @@ const styles = StyleSheet.create({
 });
 
 
-export default function HomeScreen() {
+export default function ManagerScreen() {
   // const [isCollapsed, setIsCollapsed] = useState(false);
+  // const [pusher, setPusher] = useState<Pusher | null>(null);
   const [newRequestsState, setNewRequestsState] = useState<ManagerApprovalRequest[]>([]);
   const [pastRequestsState, setPastRequestsState] = useState<ManagerApprovalRequest[]>([]);
   const [loading, setLoading] = useState(false);
-  const [pusher, setPusher] = useState<Pusher | null>(null);
   const seenUuids = useRef(new Set());
+  const { username } = useAuth();
 
   useEffect(() => {
     const fetchApprovalRequests = async () => {
       try {
-        const pastRequests = await axios.get('http://100.84.87.96:8013/frontend/operational-menu/v2/venues/24477/discounts/approval-requests?statusList=APPROVED,REJECTED&sortDesc=responseSentAt', {
+        const pastRequests = await axios.get('http://100.84.87.96:8013/frontend/operational-menu/v2/venues/MOCKDONALDS_TORONTO/discounts/approval-requests?statusList=APPROVED,REJECTED&sortDesc=responseSentAt', {
           withCredentials: false,
           headers: {
             'Content-Type': 'application/json',
@@ -334,7 +275,7 @@ export default function HomeScreen() {
         });
         // console.log(JSON.stringify(pastRequests.data))
         setPastRequestsState(pastRequests.data);
-        const newRequests = await axios.get('http://100.84.87.96:8013/frontend/operational-menu/v2/venues/24477/discounts/approval-requests?statusList=REQUESTED', {
+        const newRequests = await axios.get('http://100.84.87.96:8013/frontend/operational-menu/v2/venues/MOCKDONALDS_TORONTO/discounts/approval-requests?statusList=REQUESTED', {
           withCredentials: false,
           headers: {
             'Content-Type': 'application/json',
@@ -361,7 +302,7 @@ export default function HomeScreen() {
       }
     };
 
-    const interval = setInterval(fetchApprovalRequests, 1000);
+    const interval = setInterval(fetchApprovalRequests, 3000);
     return () => clearInterval(interval);
   }, []);
 
@@ -404,55 +345,9 @@ export default function HomeScreen() {
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const slideAnim = useRef(new Animated.Value(0)).current;
 
-  // const addNewRequestHandler = () => {
-    // const newDiscountRequest: RequestItem = {
-    //   type: "DISCOUNT",
-    //   typeLabel: "Discount Request",
-    //   discountAmount: `$${faker.number.int({ min: 5, max: 20 })}`,
-    //   menuItemLabel: faker.commerce.productName(),
-    //   menuItemXRefID: uuid(),
-    //   menuItemPrice: `$${faker.number.int({ min: 10, max: 50 })}`,
-    //   staffUserFullName: faker.person.fullName(),
-    //   staffUserXRefID: uuid(),
-    //   totalBill: `$${faker.number.int({ min: 50, max: 100 })}`,
-    // }
-
-    // const clockInTimeHour = faker.number.int({ min: 1, max: 12 });
-    // const clockInTimeMinutes = faker.helpers.arrayElement(["00", "30"]);
-    // const scheduledStartTimeHour = faker.number.int({ min: 1, max: 12 });
-    // const scheduledStartTimeMinutes = faker.helpers.arrayElement(["00", "30"]);
-
-    // const newClockInRequest: RequestItem = {
-    //   type: "EARLY_CLOCKIN",
-    //   typeLabel: "Early Clock-in Request",
-    //   clockInTime: `${clockInTimeHour}:${clockInTimeMinutes}am`,
-    //   scheduledStartTime: `${scheduledStartTimeHour}:${scheduledStartTimeMinutes}am`,
-    //   diffFromScheduledTime: `${Math.abs(
-    //     clockInTimeHour - scheduledStartTimeHour
-    //   )} hours and ${Math.abs(
-    //     parseInt(clockInTimeMinutes) - parseInt(scheduledStartTimeMinutes)
-    //   )} minutes`,
-    //   staffUserFullName: faker.person.fullName(),
-    // };
-
-    // const newRequest = faker.helpers.arrayElement([{
-    //     data: newDiscountRequest,
-    //     status: ManagerApprovalRequestStatus.REQUESTED,
-    //     requestCreatedAt: new Date(),
-    //     responseSentAt: new Date(),
-    //     uuid: uuid(),
-    //     venueXRefID: '24477'
-    //   }, { 
-    //     data: newClockInRequest,
-    //     status: ManagerApprovalRequestStatus.REQUESTED,
-    //     requestCreatedAt: new Date(),
-    //     responseSentAt: new Date(),
-    //     uuid: uuid(),
-    //     venueXRefID: '24477' 
-    //   },
-    // ]);
-  //   addNewRequest(newRequest);
-  // };
+//   const addNewRequestHandler = () => {
+//     addNewRequest(getMockedRequest());
+//   };
 
   const addNewRequest = async (request: ManagerApprovalRequest) => {
 
@@ -475,7 +370,7 @@ export default function HomeScreen() {
       }),
     ]).start();
     const { sound } = await Audio.Sound.createAsync(
-      require("../../assets/sounds/notification.wav")
+      require("../assets/sounds/notification.wav")
     );
     await sound.playAsync();
   };
@@ -483,7 +378,7 @@ export default function HomeScreen() {
   const triggerResponse = async (uuid: string, status: ManagerApprovalRequestStatus.APPROVED | ManagerApprovalRequestStatus.REJECTED) => {
     setLoading(true);
 
-    const url = `http://100.84.87.96:8013/invenue/operational-menu/v2/venues/24477/discounts/approval-requests/${uuid}/response`;
+    const url = `http://100.84.87.96:8013/invenue/operational-menu/v2/venues/MOCKDONALDS_TORONTO/discounts/approval-requests/${uuid}/response`;
 
     const resp = await axios.post(
       url, 
@@ -527,7 +422,7 @@ export default function HomeScreen() {
                 ) : (<></>)}
       <View style={styles.header}>
         <Text style={styles.welcomeText}>
-          Welcome, <Text style={styles.name}>David L.</Text>
+          Welcome, <Text style={styles.name}>{ username }</Text>
         </Text>
       </View>
 
