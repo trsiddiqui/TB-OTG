@@ -312,7 +312,7 @@ export default function ManagerScreen() {
   //     try {
   //       const pusherInstance = Pusher.getInstance();
   //       await pusherInstance.init({
-  //         apiKey: '80a67fbfd1117a6525e2',
+  //         apiKey: 'some-key',
   //         cluster: 'mt1'
   //       });
 
