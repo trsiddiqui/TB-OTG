@@ -9,12 +9,28 @@ import {
   TouchableOpacity,
   Animated,
   ActivityIndicator,
+  Platform,
+  Button,
 } from "react-native";
-
 import { Audio } from "expo-av";
 // import { Pusher } from "@pusher/pusher-websocket-react-native";
 import { RequestItem, ManagerApprovalRequest, ManagerApprovalRequestStatus } from "../types/types";
 import { getMockedRequest } from "./utils";
+// ios notifications
+import * as Device from 'expo-device';
+import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
+// ios notifications
+
+// ios notifications
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
+// ios notifications
 
 const renderApprovalDescription = (item: RequestItem) => {
   switch (item.type) {
@@ -254,20 +270,115 @@ const styles = StyleSheet.create({
   },
 });
 
+async function schedulePushNotification() {
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: "You've got mail! 📬",
+      body: 'Here is the notification body',
+      data: { data: 'goes here', test: { test1: 'more data' } },
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds: 2,
+    },
+  });
+}
+
+async function registerForPushNotificationsAsync() {
+  let token;
+
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('myNotificationChannel', {
+      name: 'A channel is needed for the permissions prompt to appear',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#FF231F7C',
+    });
+  }
+
+  if (Device.isDevice) {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+    if (finalStatus !== 'granted') {
+      alert('Failed to get push token for push notification!');
+      return;
+    }
+    // Learn more about projectId:
+    // https://docs.expo.dev/push-notifications/push-notifications-setup/#configure-projectid
+    // EAS projectId is used here.
+    try {
+      const projectId =
+        Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
+      if (!projectId) {
+        throw new Error('Project ID not found');
+      }
+      token = (
+        await Notifications.getExpoPushTokenAsync({
+          projectId,
+        })
+      ).data;
+      console.log(token);
+    } catch (e) {
+      token = `${e}`;
+    }
+  } else {
+    alert('Must use physical device for Push Notifications');
+  }
+
+  return token;
+}
 
 export default function ManagerScreen() {
   // const [isCollapsed, setIsCollapsed] = useState(false);
   // const [pusher, setPusher] = useState<Pusher | null>(null);
+  
+  // ios notifications
+  const [expoPushToken, setExpoPushToken] = useState('');
+  const [channels, setChannels] = useState<Notifications.NotificationChannel[]>([]);
+  const [notification, setNotification] = useState<Notifications.Notification | undefined>(
+    undefined
+  );
+  const notificationListener = useRef<Notifications.EventSubscription>();
+  const responseListener = useRef<Notifications.EventSubscription>();
+  // ios notifications
   const [newRequestsState, setNewRequestsState] = useState<ManagerApprovalRequest[]>([]);
   const [pastRequestsState, setPastRequestsState] = useState<ManagerApprovalRequest[]>([]);
   const [loading, setLoading] = useState(false);
   const seenUuids = useRef(new Set());
   const { username } = useAuth();
 
+  // ios notifications
+  useEffect(() => {
+    registerForPushNotificationsAsync().then(token => token && setExpoPushToken(token));
+
+    if (Platform.OS === 'android') {
+      Notifications.getNotificationChannelsAsync().then(value => setChannels(value ?? []));
+    }
+    notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
+      setNotification(notification);
+    });
+
+    responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
+      console.log(response);
+    });
+
+    return () => {
+      notificationListener.current &&
+        Notifications.removeNotificationSubscription(notificationListener.current);
+      responseListener.current &&
+        Notifications.removeNotificationSubscription(responseListener.current);
+    };
+  }, []);
+  // ios notifications
+
   useEffect(() => {
     const fetchApprovalRequests = async () => {
       try {
-        const pastRequests = await axios.get('http://100.84.87.96:8013/frontend/operational-menu/v2/venues/MOCKDONALDS_TORONTO/discounts/approval-requests?statusList=APPROVED,REJECTED&sortDesc=responseSentAt', {
+        const pastRequests = await axios.get('http://100.84.87.96:8013/frontend/operational-menu/v2/venues/24477/discounts/approval-requests?statusList=APPROVED,REJECTED&sortDesc=responseSentAt', {
           withCredentials: false,
           headers: {
             'Content-Type': 'application/json',
@@ -275,7 +386,7 @@ export default function ManagerScreen() {
         });
         // console.log(JSON.stringify(pastRequests.data))
         setPastRequestsState(pastRequests.data);
-        const newRequests = await axios.get('http://100.84.87.96:8013/frontend/operational-menu/v2/venues/MOCKDONALDS_TORONTO/discounts/approval-requests?statusList=REQUESTED', {
+        const newRequests = await axios.get('http://100.84.87.96:8013/frontend/operational-menu/v2/venues/24477/discounts/approval-requests?statusList=REQUESTED', {
           withCredentials: false,
           headers: {
             'Content-Type': 'application/json',
@@ -378,7 +489,7 @@ export default function ManagerScreen() {
   const triggerResponse = async (uuid: string, status: ManagerApprovalRequestStatus.APPROVED | ManagerApprovalRequestStatus.REJECTED) => {
     setLoading(true);
 
-    const url = `http://100.84.87.96:8013/invenue/operational-menu/v2/venues/MOCKDONALDS_TORONTO/discounts/approval-requests/${uuid}/response`;
+    const url = `http://100.84.87.96:8013/invenue/operational-menu/v2/venues/24477/discounts/approval-requests/${uuid}/response`;
 
     const resp = await axios.post(
       url, 
@@ -510,6 +621,12 @@ export default function ManagerScreen() {
       )}
 
       <Text style={styles.sectionTitle}>Previous Requests</Text>
+      <Button
+        title="Press to schedule a notification"
+        onPress={async () => {
+          await schedulePushNotification();
+        }}
+      />
 
       <FlatList
         data={pastRequestsState}
